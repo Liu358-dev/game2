@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>🐦 翟大宝子历险记</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: linear-gradient(160deg, #4a7c59 0%, #2c4a3a 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Segoe UI', 'Courier New', monospace;
+      padding: 20px;
+      margin: 0;
+    }
+    .game-wrapper {
+      background: #e2f0da;
+      padding: 18px;
+      border-radius: 36px;
+      box-shadow: 0 25px 40px rgba(0, 0, 0, 0.5), inset 0 0 18px rgba(255, 255, 220, 0.8);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      max-width: 500px;
+      height: auto;
+      border-radius: 24px;
+      box-shadow: 0 12px 22px rgba(0,0,0,0.4);
+      background-color: #b8dbe0;
+    }
+    .panel {
+      width: 100%;
+      margin-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fefae0;
+      padding: 12px 20px;
+      border-radius: 50px;
+      font-weight: bold;
+      color: #2d4b2c;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.15);
+      font-size: 18px;
+    }
+    .score-display {
+      background: #f7d44a;
+      padding: 8px 24px;
+      border-radius: 30px;
+      font-size: 24px;
+      font-weight: 800;
+      color: #1e3b1e;
+      box-shadow: 0 4px 0 #c29a2c;
+    }
+    button {
+      background: #5b9b6b;
+      border: none;
+      color: white;
+      font-weight: bold;
+      font-size: 17px;
+      padding: 10px 24px;
+      border-radius: 40px;
+      cursor: pointer;
+      box-shadow: 0 5px 0 #2b4f2b;
+      transition: 0.08s linear;
+      border: 2px solid #c6e0b0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    button:active {
+      transform: translateY(3px);
+      box-shadow: 0 2px 0 #2b4f2b;
+    }
+    .level-tag {
+      background: #c7e9a8;
+      padding: 5px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #2d4a2c;
+      margin-left: 8px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+<div style="display: flex; flex-direction: column; align-items: center;">
+  <div class="game-wrapper">
+    <canvas id="gameCanvas" width="400" height="600" aria-label="超轻飞鸟游戏画面"></canvas>
+    <div class="panel">
+      <span>🐤 <span id="scoreValue">0</span></span>
+      <div style="display: flex; align-items: center;">
+        <span class="level-tag">够150分凭截图领取520红包</span>
+        <button id="restartButton">↺ 重来</button>
+      </div>
+    </div>
+    <div style="color: #2b482b; margin-top: 8px; font-size: 14px; font-weight: 500;">
+      ✨ 空格/点击画面跳跃 · 点击"重来"按钮重新开始
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreSpan = document.getElementById('scoreValue');
+
+    const W = 400, H = 600;
+
+    // ---------- 游戏状态 ----------
+    let birdY, birdVy, birdRadius;
+    let pipes;
+    let score;
+    let gameActive;
+    let gameOverFlag;
+
+    // ---------- 超轻参数 ----------
+    const GRAVITY = 0.12;        // 极轻重力，像羽毛飘落
+    const JUMP_FORCE = -3.5;     // 轻盈跳跃
+    const PIPE_SPEED = 1.8;      // 管道移动很慢
+    const PIPE_WIDTH = 32;
+    const PIPE_GAP = 170;        // 超宽间隙
+    const PIPE_SPACING = 260;    // 管道间距很大
+    const BIRD_X = 85;
+
+    // ---------- 音频系统 ----------
+    let audioCtx = null;
+    let bgmGain = null;
+    let bgmActive = false;
+    let melodyTimer = null;
+
+    const happyNotes = [
+      { freq: 523.25, dur: 0.22, gap: 0.26 },
+      { freq: 587.33, dur: 0.22, gap: 0.26 },
+      { freq: 659.25, dur: 0.22, gap: 0.26 },
+      { freq: 523.25, dur: 0.22, gap: 0.26 },
+      { freq: 783.99, dur: 0.22, gap: 0.30 },
+      { freq: 659.25, dur: 0.22, gap: 0.26 },
+      { freq: 587.33, dur: 0.26, gap: 0.34 },
+      { freq: 440.00, dur: 0.22, gap: 0.26 },
+      { freq: 493.88, dur: 0.22, gap: 0.26 },
+      { freq: 523.25, dur: 0.30, gap: 0.36 }
+    ];
+
+    function initAudio() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        bgmGain = audioCtx.createGain();
+        bgmGain.gain.value = 0.12;
+        bgmGain.connect(audioCtx.destination);
+      } catch (e) {
+        console.warn("音频不可用", e);
+      }
+    }
+
+    function playTone(freq, duration, startTime) {
+      if (!audioCtx || !bgmGain) return;
+      try {
+        const osc = audioCtx.createOscillator();
+        const vol = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        vol.gain.setValueAtTime(0.15, startTime);
+        vol.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+        osc.connect(vol);
+        vol.connect(bgmGain);
+        osc.start(startTime);
+        osc.stop(startTime + duration + 0.02);
+      } catch (e) {}
+    }
+
+    function stopBgm() {
+      if (melodyTimer) {
+        clearTimeout(melodyTimer);
+        melodyTimer = null;
+      }
+      bgmActive = false;
+    }
+
+    function startBgmLoop() {
+      if (!audioCtx || !bgmGain) initAudio();
+      if (!audioCtx || !bgmGain) return;
+      if (bgmActive) return;
+      stopBgm();
+      bgmActive = true;
+      let idx = 0;
+      function schedule() {
+        if (!bgmActive || !audioCtx || audioCtx.state === 'closed') return;
+        const now = audioCtx.currentTime;
+        const note = happyNotes[idx % happyNotes.length];
+        playTone(note.freq, note.dur, now);
+        idx++;
+        melodyTimer = setTimeout(schedule, (note.dur + note.gap) * 1000);
+      }
+      schedule();
+    }
+
+    function resumeAudio() {
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => {
+          if (!bgmActive && gameActive && !gameOverFlag) startBgmLoop();
+        });
+      }
+    }
+
+    // ---------- 游戏逻辑 ----------
+    function resetGame() {
+      birdY = H / 2 - 20;
+      birdVy = 0;
+      birdRadius = 10;
+
+      pipes = [];
+      let startX = W + 140;
+      pipes.push(createPipe(startX));
+      pipes.push(createPipe(startX + PIPE_SPACING));
+
+      score = 0;
+      gameActive = true;
+      gameOverFlag = false;
+      scoreSpan.textContent = "0";
+
+      initAudio();
+      resumeAudio();
+      if (!bgmActive && audioCtx) {
+        startBgmLoop();
+      }
+    }
+
+    function createPipe(xPos) {
+      const minCenter = 110;
+      const maxCenter = H - 130;
+      const gapCenter = Math.floor(Math.random() * (maxCenter - minCenter) + minCenter);
+      return {
+        x: xPos,
+        gapY: gapCenter,
+        width: PIPE_WIDTH,
+        scored: false
+      };
+    }
+
+    function gameOver() {
+      if (!gameActive) return;
+      gameActive = false;
+      gameOverFlag = true;
+      stopBgm();
+      if (audioCtx && bgmGain) {
+        try {
+          const t = audioCtx.currentTime;
+          const o = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          o.type = 'triangle';
+          o.frequency.value = 200;
+          g.gain.setValueAtTime(0.2, t);
+          g.gain.exponentialRampToValueAtTime(0.001, t+0.2);
+          o.connect(g);
+          g.connect(bgmGain);
+          o.start(t);
+          o.stop(t+0.22);
+        } catch(e){}
+      }
+    }
+
+    function flap() {
+      if (!gameActive) {
+        // 游戏结束时点击画面不再重新开始，只能通过"重来"按钮
+        return;
+      }
+      birdVy = JUMP_FORCE;
+      if (audioCtx && bgmGain) {
+        try {
+          const t = audioCtx.currentTime;
+          const o = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          o.type = 'sine';
+          o.frequency.value = 800;
+          g.gain.setValueAtTime(0.06, t);
+          g.gain.exponentialRampToValueAtTime(0.001, t+0.06);
+          o.connect(g);
+          g.connect(bgmGain);
+          o.start(t);
+          o.stop(t+0.08);
+        } catch(e){}
+      }
+    }
+
+    function update() {
+      if (!gameActive) return;
+
+      // 应用极轻重力
+      birdVy += GRAVITY;
+      birdY += birdVy;
+
+      // 限制最大下落速度，防止加速过快
+      if (birdVy > 3.0) birdVy = 3.0;
+
+      // 移动管道并计分
+      for (let i = pipes.length - 1; i >= 0; i--) {
+        const p = pipes[i];
+        p.x -= PIPE_SPEED;
+
+        if (!p.scored && p.x + p.width < BIRD_X) {
+          p.scored = true;
+          score++;
+          scoreSpan.textContent = score;
+          if (audioCtx && bgmGain) {
+            try {
+              const t = audioCtx.currentTime;
+              const o = audioCtx.createOscillator();
+              const g = audioCtx.createGain();
+              o.type = 'sine';
+              o.frequency.value = 1100;
+              g.gain.setValueAtTime(0.08, t);
+              g.gain.exponentialRampToValueAtTime(0.001, t+0.08);
+              o.connect(g);
+              g.connect(bgmGain);
+              o.start(t);
+              o.stop(t+0.1);
+            } catch(e){}
+          }
+        }
+
+        if (p.x + p.width < 0) {
+          pipes.splice(i, 1);
+        }
+      }
+
+      // 生成新管道
+      if (pipes.length === 0) {
+        pipes.push(createPipe(W + 60));
+      } else {
+        const last = pipes[pipes.length-1];
+        if (last.x < W - PIPE_SPACING + 70) {
+          pipes.push(createPipe(last.x + PIPE_SPACING));
+        }
+      }
+
+      // 边界碰撞
+      const groundY = H - 38;
+      if (birdY - birdRadius <= 0 || birdY + birdRadius >= groundY) {
+        gameOver();
+        return;
+      }
+
+      // 管道碰撞
+      for (let p of pipes) {
+        const upperH = p.gapY - PIPE_GAP/2;
+        const lowerY = p.gapY + PIPE_GAP/2;
+        if (circleHitRect(birdY, BIRD_X, birdRadius, p.x, 0, p.width, upperH) ||
+            circleHitRect(birdY, BIRD_X, birdRadius, p.x, lowerY, p.width, H - lowerY)) {
+          gameOver();
+          return;
+        }
+      }
+    }
+
+    function circleHitRect(cy, cx, r, rx, ry, rw, rh) {
+      const closestX = Math.max(rx, Math.min(cx, rx + rw));
+      const closestY = Math.max(ry, Math.min(cy, ry + rh));
+      return (cx - closestX)**2 + (cy - closestY)**2 < r * r;
+    }
+
+    // ---------- 绘制 ----------
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, '#c6ecf0');
+      grad.addColorStop(0.8, '#e0f5d8');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = 'rgba(255,255,250,0.9)';
+      drawCloud(50, 80, 42);
+      drawCloud(310, 150, 50);
+      drawCloud(170, 45, 34);
+      drawCloud(260, 220, 38);
+
+      for (let p of pipes) {
+        const upperH = p.gapY - PIPE_GAP/2;
+        const lowerY = p.gapY + PIPE_GAP/2;
+        ctx.fillStyle = '#6db56d';
+        ctx.strokeStyle = '#2d5a2d';
+        ctx.lineWidth = 2.5;
+        ctx.fillRect(p.x, 0, p.width, upperH);
+        ctx.strokeRect(p.x, 0, p.width, upperH);
+        ctx.fillStyle = '#8dcf8d';
+        ctx.fillRect(p.x-3, upperH-16, p.width+6, 16);
+        ctx.fillStyle = '#6db56d';
+        ctx.fillRect(p.x, lowerY, p.width, H-lowerY);
+        ctx.strokeRect(p.x, lowerY, p.width, H-lowerY);
+        ctx.fillStyle = '#8dcf8d';
+        ctx.fillRect(p.x-3, lowerY, p.width+6, 16);
+      }
+
+      ctx.fillStyle = '#c4a97d';
+      ctx.fillRect(0, H-38, W, 42);
+      ctx.fillStyle = '#9b7a5a';
+      ctx.fillRect(0, H-38, W, 7);
+      ctx.fillStyle = '#e1c699';
+      for (let i=0;i<W;i+=32) ctx.fillRect(i, H-28, 18, 8);
+
+      const bx = BIRD_X, by = birdY;
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.fillStyle = '#FFD966';
+      ctx.beginPath();
+      ctx.ellipse(0,0, birdRadius, birdRadius*0.9, 0,0,Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = '#C49A2C';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#E6B422';
+      ctx.beginPath();
+      ctx.ellipse(-7,-2, 5,7, -0.3,0,Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(6,-5,4.8,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#222';
+      ctx.beginPath();
+      ctx.arc(8,-6,2.5,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(9,-7,0.8,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#FF7A45';
+      ctx.beginPath();
+      ctx.moveTo(13,-2);
+      ctx.lineTo(19,0);
+      ctx.lineTo(13,3);
+      ctx.fill();
+      ctx.restore();
+
+      if (gameOverFlag) {
+        ctx.globalAlpha = 0.75;
+        ctx.fillStyle = '#1f2b1f';
+        ctx.fillRect(0,0,W,H);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#f9e7b3';
+        ctx.font = 'bold 28px "Courier New"';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', W/2, H/2-18);
+        ctx.font = '17px "Courier New"';
+        ctx.fillText('得分: '+score, W/2, H/2+38);
+        ctx.fillText('菜就多练翟大宝', W/2, H/2+72);
+      }
+    }
+
+    function drawCloud(x,y,s) {
+      ctx.beginPath();
+      ctx.ellipse(x,y,s*0.7,s*0.5,0,0,Math.PI*2);
+      ctx.ellipse(x+s*0.5,y-s*0.2,s*0.6,s*0.45,0,0,Math.PI*2);
+      ctx.ellipse(x-s*0.4,y-s*0.2,s*0.6,s*0.45,0,0,Math.PI*2);
+      ctx.fill();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // 事件绑定
+    window.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Space' || e.code === 'Space') {
+        e.preventDefault();
+        flap();
+        resumeAudio();
+      }
+    });
+    canvas.addEventListener('click', (e) => {
+      e.preventDefault();
+      flap();
+      resumeAudio();
+    });
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      flap();
+      resumeAudio();
+    }, {passive: false});
+    document.getElementById('restartButton').addEventListener('click', (e) => {
+      e.stopPropagation();
+      resetGame();
+    });
+
+    function firstInteraction() {
+      initAudio();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      if (!bgmActive && gameActive && !gameOverFlag) startBgmLoop();
+      window.removeEventListener('click', firstInteraction);
+      window.removeEventListener('keydown', firstInteraction);
+      window.removeEventListener('touchstart', firstInteraction);
+    }
+    window.addEventListener('click', firstInteraction);
+    window.addEventListener('keydown', firstInteraction);
+    window.addEventListener('touchstart', firstInteraction);
+
+    resetGame();
+    loop();
+
+    window.addEventListener('beforeunload', () => {
+      stopBgm();
+      if (audioCtx) audioCtx.close();
+    });
+  })();
+</script>
+</body>
+</html>
